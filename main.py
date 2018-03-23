@@ -46,33 +46,35 @@ def generate_png_idat_chunk(im, fh):
             data += pix[x, y]
     generate_png_chunk('IDAT', zlib.compress(bytes(data)), fh)
 
-def generate_png_text_chunk_1(command, delimiter, fh, embed=None):
+def generate_png_text_chunk_1(delimiter, fh):
     # tEXt chunk for the interpreter
     data = []
     data += [ b'Comment\0' ]  # keyword
     escape = bytes(reversed(list(filter(lambda c: c in b"\"'`", fh.getvalue()))))  # TODO: do strictly
     data += [ escape + b'= :;' ]
+    data += [ b": <<'%s'\n" % delimiter ]  # open heredoc
+    generate_png_chunk('tEXt', b''.join(data), fh)
+
+def generate_png_text_chunk_2(command, delimiter, fh, embed=None):
+    data = []
+    data += [ b"\n%s\n" % delimiter ]  # close heredoc
     if embed is not None:
         with open(embed, 'rb') as embed_fh:
             data += [ b"base64 -d <<EOF > %s\n" % os.path.basename(embed).encode() ]
             data += [ base64.b64encode(embed_fh.read()) + b'\n' ]
             data += [ b'EOF\n' ]
     data += [ command.encode() + b'\n' ]
-    data += [ b": <<'%s'\n" % delimiter ]
+    data += [ b'#' ]
     generate_png_chunk('tEXt', b''.join(data), fh)
-
-def generate_png_text_chunk_2(delimiter, fh):
-    data = b"\n%s\n#" % delimiter  # close heredoc
-    generate_png_chunk('tEXt', data, fh)
 
 def generate_png(im, command, embed=None):
     fh = io.BytesIO()
     fh.write(b'\x89PNG\r\n\x1a\n') # PNG file signature
     generate_png_ihdr_chunk(im, fh)
     delimiter = hashlib.sha256(b'piet').hexdigest().encode()  # use heredoc to escape other chunks
-    generate_png_text_chunk_1(command, delimiter, fh, embed=embed)
+    generate_png_text_chunk_1(delimiter, fh)
     generate_png_idat_chunk(im, fh)
-    generate_png_text_chunk_2(delimiter, fh)
+    generate_png_text_chunk_2(command, delimiter, fh, embed=embed)
     generate_png_chunk('IEND', b'', fh) # IEND chunk
     return fh.getvalue()
 
