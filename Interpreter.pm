@@ -3,7 +3,7 @@ package Piet::Interpreter;
 use 5.6.0;   #  or so.
 use strict;
 use Carp;
-use Image::Magick;
+# use Image::Magick;
 
 our $VERSION = '0.03';
 
@@ -235,7 +235,7 @@ sub image {
     #  Read file into object and process
 
     $self->{_filename}  = $file;
-    $self->{_image}     = Image::Magick->new;
+    $self->{_image}     = Image__Magick->new;
     $self->{_image}->Read($file);
 
     $self->_process_image;
@@ -1336,3 +1336,87 @@ L<http://www.physics.usyd.edu.au/~mar/esoteric/piet.html>
 
 1;
 
+package Image__Magick;
+use Compress::Zlib;
+
+sub new {
+    my ($class) = @_;
+    my $self = bless {
+	_filename    => undef,
+	_width       => undef,
+	_hegiht      => undef,
+	_data        => undef,
+    }, ref($class) || $class;
+    return $self;
+}
+
+sub _read_file_and_split_to_chunks {
+    my ($self, $filename) = @_;
+    open my $fh, '< :raw :bytes', $filename or die;
+    my $buffer;
+    read $fh, $buffer, 8;
+    die if $buffer ne "\x89PNG\r\n\x1a\n";
+    my @chunks = ();
+    while (read $fh, $buffer, 4) {
+	my $chunk = {};
+	$chunk->{length} = unpack 'N', $buffer;
+	read $fh, $buffer, 4;
+	$chunk->{type} = $buffer;
+	read $fh, $buffer, $chunk->{length};
+	$chunk->{data} = $buffer;
+	read $fh, $buffer, 4;
+	$chunk->{crc32} = unpack 'N', $buffer;
+	push @chunks, $chunk;
+    }
+    close $fh;
+    return @chunks;
+}
+
+sub Read {
+    my ($self, $filename) = @_;
+    $self->{_filename} = $filename;
+    my @chunks = $self->_read_file_and_split_to_chunks($filename);
+
+    # check IHDR
+    die if $chunks[0]->{type} ne 'IHDR';
+    $self->{_width}  = unpack 'N', (substr $chunks[0]->{data}, 0, 4);
+    $self->{_height} = unpack 'N', (substr $chunks[0]->{data}, 4, 8);
+    die if (substr $chunks[0]->{data}, 8) != "\x08\x02\0\0\0";
+
+    # concat IDAT
+    my $data = '';
+    foreach my $chunk (@chunks) {
+	if ($chunk->{type} eq 'IDAT') {
+	    $data .= $chunk->{data};
+	}
+    }
+
+    # deflate
+    my $zlib = inflateInit() or die;
+    my ($image, $status) = $zlib->inflate(\$data);
+    die if $status != Z_STREAM_END;
+    $self->{_data} = $image;
+}
+
+sub Get {
+    my ($self, $s) = @_;
+    if ($s eq 'rows') {
+	return $self->{_height};
+    } elsif ($s eq 'columns') {
+	return $self->{_width};
+    } else {
+	$s =~ /^pixel\[(\d+),(\d+)]$/;
+	my $x = $1;
+	my $y = $2;
+	my $offset = $y * ($self->{_width} * 3 + 1) + ($x * 3 + 1);
+	my $r = 257 * ord (substr $self->{_data}, $offset,     1);  # what is 257 ???
+	my $g = 257 * ord (substr $self->{_data}, $offset + 1, 1);
+	my $b = 257 * ord (substr $self->{_data}, $offset + 2, 1);
+	return "$r,$g,$b";
+    }
+}
+
+package Main;
+die if @ARGV != 1;
+my $p = Piet::Interpreter->new(image => $ARGV[0]);
+$p->run;
