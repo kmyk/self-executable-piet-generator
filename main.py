@@ -55,26 +55,21 @@ def generate_png_text_chunk_1(delimiter, fh):
     data += [ b": <<'%s'\n" % delimiter ]  # open heredoc
     generate_png_chunk('tEXt', b''.join(data), fh)
 
-def generate_png_text_chunk_2(command, delimiter, fh, embed=None):
+def generate_png_text_chunk_2(command, delimiter, fh):
     data = []
     data += [ b"\n%s\n" % delimiter ]  # close heredoc
-    if embed is not None:
-        with open(embed, 'rb') as embed_fh:
-            data += [ b"base64 -d <<EOF > %s\n" % os.path.basename(embed).encode() ]
-            data += [ base64.b64encode(embed_fh.read()) + b'\n' ]
-            data += [ b'EOF\n' ]
     data += [ command.encode() + b'\n' ]
     data += [ b'#' ]
     generate_png_chunk('tEXt', b''.join(data), fh)
 
-def generate_png(im, command, embed=None):
+def generate_png(im, command):
     fh = io.BytesIO()
     fh.write(b'\x89PNG\r\n\x1a\n') # PNG file signature
     generate_png_ihdr_chunk(im, fh)
     delimiter = hashlib.sha256(b'piet').hexdigest().encode()  # use heredoc to escape other chunks
     generate_png_text_chunk_1(delimiter, fh)
     generate_png_idat_chunk(im, fh)
-    generate_png_text_chunk_2(command, delimiter, fh, embed=embed)
+    generate_png_text_chunk_2(command, delimiter, fh)
     generate_png_chunk('IEND', b'', fh) # IEND chunk
     return fh.getvalue()
 
@@ -84,15 +79,19 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('file', nargs='?')
-    parser.add_argument('--command', default='exec npiet $0')
-    parser.add_argument('--embed')
+    parser.add_argument('--command', help='bundled command. for example, "exec npiet $0"')
     args = parser.parse_args()
+
+    if args.command is None:
+        with open('Interpreter.pm') as fh:
+            code = fh.read()
+        args.command = "perl -e '" + code.replace("'", "'\\''") + "' $0"
 
     if args.file is None:
         x = PIL.Image.open(sys.stdin.buffer)
     else:
         x = PIL.Image.open(args.file)
-    y = generate_png(x, command=args.command, embed=args.embed)
+    y = generate_png(x, command=args.command)
     sys.stdout.buffer.write(y)
 
 if __name__ == '__main__':
